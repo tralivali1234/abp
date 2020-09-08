@@ -42,14 +42,14 @@ public override async Task<Microsoft.AspNetCore.Identity.ExternalLoginInfo> GetE
 {
     var auth = await Context.AuthenticateAsync(Microsoft.AspNetCore.Identity.IdentityConstants.ExternalScheme);
     var items = auth?.Properties?.Items;
-    if (auth?.Principal == null || items == null || !items.ContainsKey("LoginProviderKey"))
+    if (auth?.Principal == null || items == null || !items.ContainsKey(LoginProviderKey))
     {
         return null;
     }
 
     if (expectedXsrf != null)
     {
-        if (!items.ContainsKey("XsrfKey"))
+        if (!items.ContainsKey(XsrfKey))
         {
             return null;
         }
@@ -93,7 +93,7 @@ PreConfigure<IdentityBuilder>(identityBuilder =>
 
 ## 本文的源代码
 
-你可以在[这里](https://github.com/abpframework/abp-samples/tree/master/aspnet-core/Authentication-Customization)找到已完成的示例源码.
+你可以在[这里](https://github.com/abpframework/abp-samples/tree/master/Authentication-Customization)找到已完成的示例源码.
 
 ## 另请参阅
 

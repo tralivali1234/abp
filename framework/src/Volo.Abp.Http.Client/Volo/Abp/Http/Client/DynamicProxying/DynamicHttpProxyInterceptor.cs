@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -17,7 +17,6 @@ using Volo.Abp.Http.Modeling;
 using Volo.Abp.Http.ProxyScripting.Generators;
 using Volo.Abp.Json;
 using Volo.Abp.MultiTenancy;
-using Volo.Abp.Reflection;
 using Volo.Abp.Threading;
 using Volo.Abp.Tracing;
 
@@ -107,17 +106,9 @@ namespace Volo.Abp.Http.Client.DynamicProxying
         {
             var responseAsString = await MakeRequestAsync(invocation);
 
-            //TODO: Think on that
-            if (TypeHelper.IsPrimitiveExtended(typeof(T), true))
+            if (typeof(T) == typeof(string))
             {
-                if (typeof(DateTime).IsAssignableFrom(typeof(T)))
-                {
-                    return (T)(object)DateTime.Parse(responseAsString.Trim('\"'), CultureInfo.InvariantCulture);
-                }
-                else
-                {
-                    return (T)Convert.ChangeType(responseAsString, typeof(T));
-                }
+                return (T)Convert.ChangeType(responseAsString, typeof(T));
             }
 
             return JsonSerializer.Deserialize<T>(responseAsString);
@@ -130,7 +121,7 @@ namespace Volo.Abp.Http.Client.DynamicProxying
 
             var client = HttpClientFactory.Create(clientConfig.RemoteServiceName);
 
-            var action = await ApiDescriptionFinder.FindActionAsync(remoteServiceConfig.BaseUrl, typeof(TService), invocation.Method);
+            var action = await ApiDescriptionFinder.FindActionAsync(client, remoteServiceConfig.BaseUrl, typeof(TService), invocation.Method);
             var apiVersion = GetApiVersionInfo(action);
             var url = remoteServiceConfig.BaseUrl.EnsureEndsWith('/') + UrlBuilder.GenerateUrlWithParameters(action, invocation.ArgumentsDictionary, apiVersion);
 

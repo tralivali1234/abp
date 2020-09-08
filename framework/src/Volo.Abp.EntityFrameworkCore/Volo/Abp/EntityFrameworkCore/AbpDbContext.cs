@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations.Schema;
+using System.Globalization;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
@@ -92,6 +93,8 @@ namespace Volo.Abp.EntityFrameworkCore
         {
             base.OnModelCreating(modelBuilder);
 
+            TrySetDatabaseProvider(modelBuilder);
+
             foreach (var entityType in modelBuilder.Model.GetEntityTypes())
             {
                 ConfigureBasePropertiesMethodInfo
@@ -105,6 +108,41 @@ namespace Volo.Abp.EntityFrameworkCore
                 ConfigureValueGeneratedMethodInfo
                     .MakeGenericMethod(entityType.ClrType)
                     .Invoke(this, new object[] { modelBuilder, entityType });
+            }
+        }
+
+        protected virtual void TrySetDatabaseProvider(ModelBuilder modelBuilder)
+        {
+            var provider = GetDatabaseProviderOrNull(modelBuilder);
+            if (provider != null)
+            {
+                modelBuilder.SetDatabaseProvider(provider.Value);
+            }
+        }
+
+        protected virtual EfCoreDatabaseProvider? GetDatabaseProviderOrNull(ModelBuilder modelBuilder)
+        {
+            switch (Database.ProviderName)
+            {
+                case "Microsoft.EntityFrameworkCore.SqlServer":
+                    return EfCoreDatabaseProvider.SqlServer;
+                case "Npgsql.EntityFrameworkCore.PostgreSQL":
+                    return EfCoreDatabaseProvider.PostgreSql;
+                case "Pomelo.EntityFrameworkCore.MySql":
+                    return EfCoreDatabaseProvider.MySql;
+                case "Oracle.EntityFrameworkCore":
+                case "Devart.Data.Oracle.Entity.EFCore":
+                    return EfCoreDatabaseProvider.Oracle;
+                case "Microsoft.EntityFrameworkCore.Sqlite":
+                    return EfCoreDatabaseProvider.Sqlite;
+                case "Microsoft.EntityFrameworkCore.InMemory":
+                    return EfCoreDatabaseProvider.InMemory;
+                case "FirebirdSql.EntityFrameworkCore.Firebird":
+                    return EfCoreDatabaseProvider.Firebird;
+                case "Microsoft.EntityFrameworkCore.Cosmos":
+                    return EfCoreDatabaseProvider.Cosmos;
+                default:
+                    return null;
             }
         }
 
@@ -145,17 +183,24 @@ namespace Volo.Abp.EntityFrameworkCore
             }
         }
 
+        /// <summary>
+        /// This method will call the DbContext <see cref="SaveChangesAsync(bool, CancellationToken)"/> method directly of EF Core, which doesn't apply concepts of abp.
+        /// </summary>
+        public virtual Task<int> SaveChangesOnDbContextAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+        {
+            return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+        }
+
         public virtual void Initialize(AbpEfCoreDbContextInitializationContext initializationContext)
         {
             if (initializationContext.UnitOfWork.Options.Timeout.HasValue &&
                 Database.IsRelational() &&
                 !Database.GetCommandTimeout().HasValue)
             {
-                Database.SetCommandTimeout(initializationContext.UnitOfWork.Options.Timeout.Value.TotalSeconds.To<int>());
+                Database.SetCommandTimeout(TimeSpan.FromMilliseconds(initializationContext.UnitOfWork.Options.Timeout.Value));
             }
 
             ChangeTracker.CascadeDeleteTiming = CascadeTiming.OnSaveChanges;
-            ChangeTracker.DeleteOrphansTiming = CascadeTiming.OnSaveChanges;
 
             ChangeTracker.Tracked += ChangeTracker_Tracked;
         }
@@ -195,6 +240,7 @@ namespace Volo.Abp.EntityFrameworkCore
                 {
                     continue;
                 }
+
                 /* Checking "currentValue != null" has a good advantage:
                  * Assume that you we already using a named extra property,
                  * then decided to create a field (entity extension) for it.
@@ -205,7 +251,7 @@ namespace Volo.Abp.EntityFrameworkCore
                 var currentValue = e.Entry.CurrentValues[property.Name];
                 if (currentValue != null)
                 {
-                    entity.SetProperty(property.Name, currentValue);
+                    entity.ExtraProperties[property.Name] = currentValue;
                 }
             }
         }
@@ -266,14 +312,36 @@ namespace Volo.Abp.EntityFrameworkCore
                 return;
             }
 
-            foreach (var property in objectExtension.GetProperties())
+            var efMappedProperties = ObjectExtensionManager.Instance
+                .GetProperties(entityType)
+                .Where(p => p.IsMappedToFieldForEfCore());
+
+            foreach (var property in efMappedProperties)
             {
                 if (!entity.HasProperty(property.Name))
                 {
                     continue;
                 }
 
-                entry.Property(property.Name).CurrentValue = entity.GetProperty(property.Name);
+                var entryProperty = entry.Property(property.Name);
+                var entityProperty = entity.GetProperty(property.Name);
+                if (entityProperty == null)
+                {
+                    entryProperty.CurrentValue = null;
+                    continue;
+                }
+
+                if (entryProperty.Metadata.ClrType == entityProperty.GetType())
+                {
+                    entryProperty.CurrentValue = entityProperty;
+                }
+                else
+                {
+                    if (TypeHelper.IsPrimitiveExtended(entryProperty.Metadata.ClrType, includeEnums: true))
+                    {
+                        entryProperty.CurrentValue = Convert.ChangeType(entityProperty, entryProperty.Metadata.ClrType, CultureInfo.InvariantCulture);
+                    }
+                }
             }
         }
 
@@ -446,6 +514,11 @@ namespace Volo.Abp.EntityFrameworkCore
             where TEntity : class
         {
             if (mutableEntityType.IsOwned())
+            {
+                return;
+            }
+
+            if (!typeof(IEntity).IsAssignableFrom(typeof(TEntity)))
             {
                 return;
             }

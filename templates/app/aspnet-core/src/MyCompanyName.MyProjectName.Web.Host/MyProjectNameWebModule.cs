@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using Microsoft.AspNetCore.Authentication.OAuth.Claims;
 using Microsoft.AspNetCore.Builder;
@@ -26,6 +26,7 @@ using Volo.Abp.AspNetCore.Serilog;
 using Volo.Abp.Autofac;
 using Volo.Abp.AutoMapper;
 using Volo.Abp.Caching;
+using Volo.Abp.Caching.StackExchangeRedis;
 using Volo.Abp.FeatureManagement;
 using Volo.Abp.Http.Client.IdentityModel.Web;
 using Volo.Abp.Identity.Web;
@@ -47,6 +48,7 @@ namespace MyCompanyName.MyProjectName.Web
         typeof(AbpAspNetCoreMvcClientModule),
         typeof(AbpAspNetCoreMvcUiBasicThemeModule),
         typeof(AbpAutofacModule),
+        typeof(AbpCachingStackExchangeRedisModule),
         typeof(AbpFeatureManagementWebModule),
         typeof(AbpHttpClientIdentityModelWebModule),
         typeof(AbpIdentityWebModule),
@@ -67,13 +69,14 @@ namespace MyCompanyName.MyProjectName.Web
                 );
             });
         }
-        
+
         public override void ConfigureServices(ServiceConfigurationContext context)
         {
             var hostingEnvironment = context.Services.GetHostingEnvironment();
             var configuration = context.Services.GetConfiguration();
 
             ConfigureCache(configuration);
+            ConfigureRedis(context, configuration, hostingEnvironment);
             ConfigureUrls(configuration);
             ConfigureAuthentication(context, configuration);
             ConfigureAutoMapper();
@@ -194,11 +197,6 @@ namespace MyCompanyName.MyProjectName.Web
             IConfiguration configuration,
             IWebHostEnvironment hostingEnvironment)
         {
-            context.Services.AddStackExchangeRedisCache(options =>
-            {
-                options.Configuration = configuration["Redis:Configuration"];
-            });
-
             if (!hostingEnvironment.IsDevelopment())
             {
                 var redis = ConnectionMultiplexer.Connect(configuration["Redis:Configuration"]);
@@ -213,17 +211,19 @@ namespace MyCompanyName.MyProjectName.Web
             var app = context.GetApplicationBuilder();
             var env = context.GetEnvironment();
 
-            app.UseCorrelationId();
-
             if (env.IsDevelopment())
             {
                 app.UseDeveloperExceptionPage();
             }
-            else
+
+            app.UseAbpRequestLocalization();
+
+            if (!env.IsDevelopment())
             {
                 app.UseErrorPage();
             }
 
+            app.UseCorrelationId();
             app.UseVirtualFiles();
             app.UseRouting();
             app.UseAuthentication();
@@ -235,9 +235,6 @@ namespace MyCompanyName.MyProjectName.Web
 
             app.UseAuthorization();
 
-
-            app.UseAbpRequestLocalization();
-
             app.UseSwagger();
             app.UseSwaggerUI(options =>
             {
@@ -246,7 +243,7 @@ namespace MyCompanyName.MyProjectName.Web
 
             app.UseAuditing();
             app.UseAbpSerilogEnrichers();
-            app.UseMvcWithDefaultRouteAndArea();
+            app.UseConfiguredEndpoints();
         }
     }
 }
